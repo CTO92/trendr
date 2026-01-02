@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(./node_modules/electron/dist/electron.exe:*)",
+      "Bash(node:*)",
+      "Bash(cmd.exe /c \"node_modules\\\\.bin\\\\electron.cmd .\")",
+      "Bash(powershell -Command:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm install:*)",
+      "Bash(ls:*)",
+      "Bash(powershell.exe -Command \"& ''./node_modules/electron/dist/electron.exe'' . 2>&1\")",
+      "Bash(npx electron .)",
+      "Bash(ELECTRON_ENABLE_LOGGING=1 npx electron:*)",
+      "Bash(npm --version:*)",
+      "Bash(npx electron:*)",
+      "Bash(timeout 5:*)",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(powershell.exe -Command \"rustc --version; cargo --version\")",
+      "Bash(~/.cargo/bin/rustc:*)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
+      "Bash(npx tauri init:*)",
+      "Bash(npm run tauri:dev:*)"
+    ]
+  }
+}
