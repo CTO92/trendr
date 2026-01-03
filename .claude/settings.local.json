@@ -23,7 +23,18 @@
       "Bash(npx tauri init:*)",
       "Bash(npm run tauri:dev:*)",
       "Bash(Remove-Item -Path \"c:\\\\Users\\\\melis\\\\OneDrive\\\\Documents\\\\Code\\\\trendr\\\\src\\\\main\\\\ipc-handlers.ts\" -Force)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(npm run tauri:build:*)",
+      "Bash(where cargo:*)",
+      "Bash(dir \"%USERPROFILE%\\\\.cargo\\\\bin\\\\cargo.exe\")",
+      "Bash(cmd /c \"set PATH=%USERPROFILE%\\\\.cargo\\\\bin;%PATH% && cargo --version\")",
+      "Bash(cmd /c \"dir %USERPROFILE%\\\\.cargo\\\\bin\\\\cargo.exe 2>nul && echo Found || echo Not found\")",
+      "Bash(C:Usersmelis.cargobincargo.exe --version)",
+      "Bash(export PATH=\"/c/Users/melis/.cargo/bin:$PATH\")",
+      "Bash(cmd /c \"set PATH=%USERPROFILE%\\\\.cargo\\\\bin;%PATH% && cargo check 2>&1\")",
+      "Bash(C:/Users/melis/.cargo/bin/cargo.exe check:*)",
+      "Bash(npx tsc:*)",
+      "Bash(del \"c:\\\\Users\\\\melis\\\\OneDrive\\\\Documents\\\\Code\\\\trendr\\\\nul\")"
     ]
   }
 }

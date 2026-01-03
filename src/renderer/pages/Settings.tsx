@@ -1,19 +1,31 @@
 import React, { useEffect, useState } from 'react';
-import { api, AppSettings, RedditCredentials } from '../api';
+import { api, AppSettings, RedditCredentials, XCredentials, YouTubeCredentials } from '../api';
 
 function Settings() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [testingReddit, setTestingReddit] = useState(false);
+  const [testingX, setTestingX] = useState(false);
+  const [testingYouTube, setTestingYouTube] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  // Form state
+  // Reddit form state
   const [redditClientId, setRedditClientId] = useState('');
   const [redditClientSecret, setRedditClientSecret] = useState('');
   const [redditUsername, setRedditUsername] = useState('');
   const [redditPassword, setRedditPassword] = useState('');
   const [subreddits, setSubreddits] = useState('');
+
+  // X form state
+  const [xBearerToken, setXBearerToken] = useState('');
+  const [xQueries, setXQueries] = useState('');
+
+  // YouTube form state
+  const [youtubeApiKey, setYoutubeApiKey] = useState('');
+  const [youtubeQueries, setYoutubeQueries] = useState('');
+
+  // General settings
   const [collectionInterval, setCollectionInterval] = useState(30);
 
   useEffect(() => {
@@ -26,7 +38,7 @@ function Settings() {
       const data = await api.getSettings();
       setSettings(data);
 
-      // Populate form
+      // Populate Reddit form
       if (data.reddit) {
         setRedditClientId(data.reddit.clientId);
         setRedditClientSecret(data.reddit.clientSecret);
@@ -34,6 +46,19 @@ function Settings() {
         setRedditPassword(data.reddit.password);
       }
       setSubreddits(data.subreddits.join(', '));
+
+      // Populate X form
+      if (data.x) {
+        setXBearerToken(data.x.bearerToken);
+      }
+      setXQueries((data.xQueries || []).join(', '));
+
+      // Populate YouTube form
+      if (data.youtube) {
+        setYoutubeApiKey(data.youtube.apiKey);
+      }
+      setYoutubeQueries((data.youtubeQueries || []).join(', '));
+
       setCollectionInterval(data.collectionIntervalMinutes);
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -57,14 +82,36 @@ function Settings() {
             }
           : null;
 
+      const x: XCredentials | null = xBearerToken.trim()
+        ? { bearerToken: xBearerToken.trim() }
+        : null;
+
       const subredditList = subreddits
         .split(',')
         .map(s => s.trim().toLowerCase().replace(/^r\//, ''))
         .filter(s => s.length > 0);
 
+      const xQueryList = xQueries
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+
+      const youtube: YouTubeCredentials | null = youtubeApiKey.trim()
+        ? { apiKey: youtubeApiKey.trim() }
+        : null;
+
+      const youtubeQueryList = youtubeQueries
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+
       await api.saveSettings({
         reddit,
+        x,
+        youtube,
         subreddits: subredditList,
+        xQueries: xQueryList,
+        youtubeQueries: youtubeQueryList,
         collectionIntervalMinutes: collectionInterval,
         searchQueries: settings?.searchQueries || [],
       });
@@ -77,8 +124,8 @@ function Settings() {
     }
   }
 
-  async function handleTestConnection() {
-    setTesting(true);
+  async function handleTestRedditConnection() {
+    setTestingReddit(true);
     setTestResult(null);
 
     try {
@@ -88,17 +135,75 @@ function Settings() {
       const success = await api.testRedditConnection();
 
       if (success) {
-        setTestResult({ success: true, message: 'Connection successful! Reddit API is working.' });
+        setTestResult({ success: true, message: 'Reddit connection successful!' });
       } else {
         setTestResult({
           success: false,
-          message: 'Connection failed. Please check your credentials.',
+          message: 'Reddit connection failed. Please check your credentials.',
         });
       }
     } catch (error) {
       setTestResult({ success: false, message: String(error) || 'Connection test failed' });
     } finally {
-      setTesting(false);
+      setTestingReddit(false);
+    }
+  }
+
+  async function handleTestXConnection() {
+    setTestingX(true);
+    setTestResult(null);
+
+    try {
+      if (!xBearerToken.trim()) {
+        setTestResult({ success: false, message: 'Please enter a Bearer Token' });
+        return;
+      }
+
+      const success = await api.testXConnection(xBearerToken.trim());
+
+      if (success) {
+        setTestResult({ success: true, message: 'X connection successful!' });
+        // Save settings on success
+        await handleSave();
+      } else {
+        setTestResult({
+          success: false,
+          message: 'X connection failed. Please check your Bearer Token.',
+        });
+      }
+    } catch (error) {
+      setTestResult({ success: false, message: String(error) || 'X connection test failed' });
+    } finally {
+      setTestingX(false);
+    }
+  }
+
+  async function handleTestYouTubeConnection() {
+    setTestingYouTube(true);
+    setTestResult(null);
+
+    try {
+      if (!youtubeApiKey.trim()) {
+        setTestResult({ success: false, message: 'Please enter an API Key' });
+        return;
+      }
+
+      const success = await api.testYouTubeConnection(youtubeApiKey.trim());
+
+      if (success) {
+        setTestResult({ success: true, message: 'YouTube connection successful!' });
+        // Save settings on success
+        await handleSave();
+      } else {
+        setTestResult({
+          success: false,
+          message: 'YouTube connection failed. Please check your API Key.',
+        });
+      }
+    } catch (error) {
+      setTestResult({ success: false, message: String(error) || 'YouTube connection test failed' });
+    } finally {
+      setTestingYouTube(false);
     }
   }
 
@@ -176,11 +281,115 @@ function Settings() {
           </div>
 
           <button
-            onClick={handleTestConnection}
-            disabled={testing || !redditClientId || !redditClientSecret}
+            onClick={handleTestRedditConnection}
+            disabled={testingReddit || !redditClientId || !redditClientSecret}
             className="btn btn-secondary disabled:opacity-50"
           >
-            {testing ? 'Testing...' : 'Test Connection'}
+            {testingReddit ? 'Testing...' : 'Test Connection'}
+          </button>
+        </div>
+      </div>
+
+      {/* X API Section */}
+      <div className="card mb-6">
+        <h2 className="font-semibold text-gray-900 mb-4">X (Twitter) API Credentials</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Get your Bearer Token from the{' '}
+          <a
+            href="https://developer.twitter.com/en/portal/dashboard"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary-600 hover:underline"
+          >
+            Twitter Developer Portal
+          </a>
+          . Basic tier ($100/mo) recommended for meaningful data collection.
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label">Bearer Token</label>
+            <input
+              type="password"
+              value={xBearerToken}
+              onChange={e => setXBearerToken(e.target.value)}
+              placeholder="Your X API Bearer Token"
+              className="input"
+            />
+          </div>
+
+          <div>
+            <label className="label">Search Queries</label>
+            <input
+              type="text"
+              value={xQueries}
+              onChange={e => setXQueries(e.target.value)}
+              placeholder="bitcoin, AI startups, side hustle"
+              className="input"
+            />
+            <p className="text-sm text-gray-500 mt-1">
+              Comma-separated topics to search for on X
+            </p>
+          </div>
+
+          <button
+            onClick={handleTestXConnection}
+            disabled={testingX || !xBearerToken}
+            className="btn btn-secondary disabled:opacity-50"
+          >
+            {testingX ? 'Testing...' : 'Test Connection'}
+          </button>
+        </div>
+      </div>
+
+      {/* YouTube API Section */}
+      <div className="card mb-6">
+        <h2 className="font-semibold text-gray-900 mb-4">YouTube API Credentials</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Get your API Key from the{' '}
+          <a
+            href="https://console.cloud.google.com/apis/credentials"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary-600 hover:underline"
+          >
+            Google Cloud Console
+          </a>
+          . Enable the YouTube Data API v3. Free tier includes 10,000 units/day.
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label">API Key</label>
+            <input
+              type="password"
+              value={youtubeApiKey}
+              onChange={e => setYoutubeApiKey(e.target.value)}
+              placeholder="Your YouTube Data API v3 Key"
+              className="input"
+            />
+          </div>
+
+          <div>
+            <label className="label">Search Queries</label>
+            <input
+              type="text"
+              value={youtubeQueries}
+              onChange={e => setYoutubeQueries(e.target.value)}
+              placeholder="bitcoin tutorial, AI explained, side hustle ideas"
+              className="input"
+            />
+            <p className="text-sm text-gray-500 mt-1">
+              Comma-separated topics to search for on YouTube
+            </p>
+          </div>
+
+          <button
+            onClick={handleTestYouTubeConnection}
+            disabled={testingYouTube || !youtubeApiKey}
+            className="btn btn-secondary disabled:opacity-50"
+          >
+            {testingYouTube ? 'Testing...' : 'Test Connection'}
           </button>
         </div>
       </div>

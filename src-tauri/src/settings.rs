@@ -14,11 +14,31 @@ pub struct RedditCredentials {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct XCredentials {
+    #[serde(rename = "bearerToken")]
+    pub bearer_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct YouTubeCredentials {
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub reddit: Option<RedditCredentials>,
+    pub x: Option<XCredentials>,
+    pub youtube: Option<YouTubeCredentials>,
     #[serde(rename = "collectionIntervalMinutes")]
     pub collection_interval_minutes: u32,
     pub subreddits: Vec<String>,
+    #[serde(rename = "xQueries")]
+    #[serde(default)]
+    pub x_queries: Vec<String>,
+    #[serde(rename = "youtubeQueries")]
+    #[serde(default)]
+    pub youtube_queries: Vec<String>,
     #[serde(rename = "searchQueries")]
     pub search_queries: Vec<String>,
 }
@@ -27,6 +47,8 @@ impl AppSettings {
     fn default_settings() -> Self {
         AppSettings {
             reddit: None,
+            x: None,
+            youtube: None,
             collection_interval_minutes: 30,
             subreddits: vec![
                 "cryptocurrency".to_string(),
@@ -35,6 +57,8 @@ impl AppSettings {
                 "sidehustle".to_string(),
                 "entrepreneur".to_string(),
             ],
+            x_queries: vec![],
+            youtube_queries: vec![],
             search_queries: vec![],
         }
     }

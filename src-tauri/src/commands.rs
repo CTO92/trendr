@@ -1,5 +1,7 @@
 use crate::database::with_db;
 use crate::reddit;
+use crate::x;
+use crate::youtube;
 use crate::settings::{self, AppSettings};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -122,6 +124,70 @@ pub async fn test_reddit_connection() -> Result<bool, String> {
         Some(credentials) => reddit::test_connection(&credentials).await,
         None => Err("Reddit credentials not configured".to_string()),
     }
+}
+
+#[tauri::command]
+pub async fn test_x_connection(bearer_token: String) -> Result<bool, String> {
+    x::test_connection(&bearer_token).await
+}
+
+#[tauri::command]
+pub async fn run_x_collection() -> Result<CollectionResult, String> {
+    let settings = settings::load_settings();
+
+    let credentials = settings.x.ok_or("X credentials not configured")?;
+    let queries = settings.x_queries;
+
+    if queries.is_empty() {
+        return Err("No X search queries configured. Add some topics to search for.".to_string());
+    }
+
+    // Check if already running
+    {
+        let state = COLLECTION_STATE.lock().map_err(|e| e.to_string())?;
+        if state.is_running {
+            return Err("Collection already in progress".to_string());
+        }
+    }
+
+    let result = x::collect(&credentials, &queries).await;
+
+    result.map(|r| CollectionResult {
+        posts_collected: r.posts_collected,
+        topics_extracted: r.topics_extracted,
+    })
+}
+
+#[tauri::command]
+pub async fn test_youtube_connection(api_key: String) -> Result<bool, String> {
+    youtube::test_connection(&api_key).await
+}
+
+#[tauri::command]
+pub async fn run_youtube_collection() -> Result<CollectionResult, String> {
+    let settings = settings::load_settings();
+
+    let credentials = settings.youtube.ok_or("YouTube credentials not configured")?;
+    let queries = settings.youtube_queries;
+
+    if queries.is_empty() {
+        return Err("No YouTube search queries configured. Add some topics to search for.".to_string());
+    }
+
+    // Check if already running
+    {
+        let state = COLLECTION_STATE.lock().map_err(|e| e.to_string())?;
+        if state.is_running {
+            return Err("Collection already in progress".to_string());
+        }
+    }
+
+    let result = youtube::collect(&credentials, &queries).await;
+
+    result.map(|r| CollectionResult {
+        posts_collected: r.posts_collected,
+        topics_extracted: r.topics_extracted,
+    })
 }
 
 // Collection commands

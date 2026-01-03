@@ -8,10 +8,22 @@ export interface RedditCredentials {
   password: string;
 }
 
+export interface XCredentials {
+  bearerToken: string;
+}
+
+export interface YouTubeCredentials {
+  apiKey: string;
+}
+
 export interface AppSettings {
   reddit: RedditCredentials | null;
+  x: XCredentials | null;
+  youtube: YouTubeCredentials | null;
   collectionIntervalMinutes: number;
   subreddits: string[];
+  xQueries: string[];
+  youtubeQueries: string[];
   searchQueries: string[];
 }
 
@@ -76,8 +88,18 @@ export const api = {
 
   testRedditConnection: (): Promise<boolean> => invoke('test_reddit_connection'),
 
+  testXConnection: (bearerToken: string): Promise<boolean> =>
+    invoke('test_x_connection', { bearerToken }),
+
+  testYouTubeConnection: (apiKey: string): Promise<boolean> =>
+    invoke('test_youtube_connection', { apiKey }),
+
   // Collection
   runCollection: (): Promise<CollectionResult> => invoke('run_collection'),
+
+  runXCollection: (): Promise<CollectionResult> => invoke('run_x_collection'),
+
+  runYouTubeCollection: (): Promise<CollectionResult> => invoke('run_youtube_collection'),
 
   getCollectionStatus: (): Promise<CollectionStatus> => invoke('get_collection_status'),
 

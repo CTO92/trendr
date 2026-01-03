@@ -1,6 +1,8 @@
 mod database;
 mod settings;
 mod reddit;
+mod x;
+mod youtube;
 mod topics;
 mod commands;
 
@@ -29,8 +31,12 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::test_reddit_connection,
+            commands::test_x_connection,
+            commands::test_youtube_connection,
             // Collection commands
             commands::run_collection,
+            commands::run_x_collection,
+            commands::run_youtube_collection,
             commands::get_collection_status,
             // Topics commands
             commands::get_topics,

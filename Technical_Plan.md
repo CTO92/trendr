@@ -963,9 +963,1141 @@ Windows: %APPDATA%/Trendr/
 
 ## Next Steps
 
-1. Initialize Electron + React project with TypeScript
-2. Set up SQLite database with schema
-3. Build settings page with API key configuration
-4. Implement Reddit collector as first platform
-5. Create basic topic extraction pipeline
-6. Build minimal dashboard to display collected data
+1. ~~Initialize Electron + React project with TypeScript~~ → **Completed with Tauri 2 + Rust**
+2. ~~Set up SQLite database with schema~~ → **Completed**
+3. ~~Build settings page with API key configuration~~ → **Completed (Reddit)**
+4. ~~Implement Reddit collector as first platform~~ → **Completed**
+5. ~~Create basic topic extraction pipeline~~ → **Completed**
+6. ~~Build minimal dashboard to display collected data~~ → **Completed**
+
+---
+
+## Current Project State (Phase 1 Complete)
+
+**Architecture Evolution:** The project migrated from Electron to **Tauri 2 + Rust** for better performance and smaller bundle size.
+
+**What's Working:**
+- Reddit OAuth2 authentication and data collection
+- Post fetching from configurable subreddits
+- Topic extraction via keyword matching
+- Creator tracking and deduplication
+- Co-occurrence tracking for topic relationships
+- Dashboard with stats and manual collection trigger
+- Topics explorer with content viewing
+- Settings persistence for Reddit credentials
+
+**Technology Stack (Actual):**
+| Component | Technology |
+|-----------|------------|
+| Desktop Framework | Tauri 2 |
+| Backend | Rust (tokio, reqwest, rusqlite) |
+| Frontend | React 18 + TypeScript + Vite |
+| Database | SQLite (rusqlite) |
+| Styling | Tailwind CSS |
+
+---
+
+## Phase 2A: X/Twitter Implementation Plan
+
+### Overview
+
+This section documents the implementation plan for adding X (Twitter) data collection to Trendr, following the established patterns from the Reddit collector.
+
+### X API v2 Background
+
+**Authentication:**
+- Uses Bearer Token (OAuth 2.0 App-Only)
+- User obtains token from [Twitter Developer Portal](https://developer.twitter.com/)
+- Token passed in `Authorization: Bearer <token>` header
+
+**API Tiers (as of 2024):**
+| Tier | Cost | Tweet Cap | Rate Limits |
+|------|------|-----------|-------------|
+| Free | $0 | 1,500 tweets/month | 1 request/15 min (search) |
+| Basic | $100/mo | 10,000 tweets/month | 60 requests/15 min |
+| Pro | $5,000/mo | 1M tweets/month | 300 requests/15 min |
+
+**Recommended:** Basic tier for meaningful data collection.
+
+**Key Endpoints:**
+| Endpoint | Purpose | Rate Limit (Basic) |
+|----------|---------|-------------------|
+| `GET /2/tweets/search/recent` | Search tweets by keyword | 60/15min |
+| `GET /2/users/:id/tweets` | Get user's recent tweets | 900/15min |
+| `GET /2/users/by/username/:username` | Lookup user by handle | 900/15min |
+| `GET /2/tweets/:id` | Get single tweet | 900/15min |
+
+**Data Fields to Request:**
+```
+tweet.fields=id,text,author_id,created_at,public_metrics,conversation_id
+user.fields=id,username,name,public_metrics
+expansions=author_id
+```
+
+### Data Mapping: X → Trendr Schema
+
+| X API Field | Trendr Table.Column | Notes |
+|-------------|---------------------|-------|
+| `tweet.id` | `content.platform_id` | Unique tweet identifier |
+| `tweet.text` | `content.text_content` | Tweet body (max 280 chars) |
+| `tweet.author_id` | Link to `creators` | Via expansion |
+| `tweet.created_at` | `content.published_at` | ISO 8601 format |
+| `tweet.public_metrics.like_count` | `content.engagement_likes` | |
+| `tweet.public_metrics.reply_count` | `content.engagement_comments` | |
+| `tweet.public_metrics.retweet_count` | `content.engagement_shares` | |
+| `tweet.public_metrics.impression_count` | `content.engagement_views` | May require elevated access |
+| `user.id` | `creators.platform_id` | |
+| `user.username` | `creators.username` | Handle without @ |
+| `user.name` | `creators.display_name` | Display name |
+| `user.public_metrics.followers_count` | `creators.follower_count` | |
+
+### Implementation Files
+
+**Files to Create:**
+```
+src-tauri/src/x.rs              # X collector module (new)
+```
+
+**Files to Modify:**
+```
+src-tauri/src/lib.rs            # Add mod x; register commands
+src-tauri/src/settings.rs       # Add XCredentials to AppSettings
+src-tauri/src/commands.rs       # Add X command handlers
+src/renderer/api.ts             # Add X API methods
+src/renderer/pages/Settings.tsx # Add X credentials UI
+src/shared/types.ts             # Already has XCredentials defined
+```
+
+### Step-by-Step Implementation
+
+#### Step 1: Create X Collector Module
+
+**File:** `src-tauri/src/x.rs`
+
+**Structure (following Reddit pattern):**
+
+```rust
+// 1. Response structs for X API v2
+#[derive(Deserialize)]
+struct TweetSearchResponse {
+    data: Option<Vec<Tweet>>,
+    includes: Option<Includes>,
+    meta: Option<Meta>,
+}
+
+#[derive(Deserialize)]
+struct Tweet {
+    id: String,
+    text: String,
+    author_id: String,
+    created_at: String,
+    public_metrics: PublicMetrics,
+}
+
+#[derive(Deserialize)]
+struct PublicMetrics {
+    like_count: i64,
+    reply_count: i64,
+    retweet_count: i64,
+    impression_count: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct Includes {
+    users: Option<Vec<XUser>>,
+}
+
+#[derive(Deserialize)]
+struct XUser {
+    id: String,
+    username: String,
+    name: String,
+    public_metrics: Option<UserMetrics>,
+}
+
+// 2. Core functions
+pub async fn test_connection(bearer_token: &str) -> Result<bool, String>
+pub async fn collect(bearer_token: &str, queries: &[String]) -> Result<CollectionResult, String>
+async fn search_tweets(client: &Client, token: &str, query: &str) -> Result<TweetSearchResponse, String>
+async fn process_tweet(tweet: &Tweet, author: Option<&XUser>) -> Result<u32, String>
+fn get_or_create_x_creator(user: &XUser) -> Result<String, String>
+```
+
+**Key Implementation Notes:**
+
+1. **Rate Limiting:** X API has strict limits. Implement exponential backoff:
+   ```rust
+   // Between requests
+   tokio::time::sleep(Duration::from_millis(1100)).await; // ~54 req/min safe margin
+
+   // On 429 response
+   if response.status() == 429 {
+       let reset = response.headers().get("x-rate-limit-reset");
+       // Wait until reset time
+   }
+   ```
+
+2. **Search Query Formatting:** X search supports operators:
+   ```
+   "bitcoin" -is:retweet lang:en  // Exclude retweets, English only
+   from:elonmusk                   // From specific user
+   #cryptocurrency                 // Hashtag search
+   ```
+
+3. **Pagination:** Use `next_token` from meta for fetching more results:
+   ```rust
+   while let Some(token) = response.meta.next_token {
+       // Fetch next page with ?pagination_token={token}
+   }
+   ```
+
+#### Step 2: Update Settings Module
+
+**File:** `src-tauri/src/settings.rs`
+
+Add to `AppSettings` struct:
+```rust
+#[derive(Serialize, Deserialize, Default)]
+pub struct AppSettings {
+    pub reddit: Option<RedditCredentials>,
+    pub x: Option<XCredentials>,           // ADD
+    pub subreddits: Vec<String>,
+    pub x_queries: Vec<String>,            // ADD - search terms for X
+    pub x_accounts: Vec<String>,           // ADD - specific accounts to follow
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct XCredentials {
+    pub bearer_token: String,
+}
+```
+
+#### Step 3: Add Command Handlers
+
+**File:** `src-tauri/src/commands.rs`
+
+```rust
+use crate::x;
+
+#[tauri::command]
+pub async fn test_x_connection(bearer_token: String) -> Result<bool, String> {
+    x::test_connection(&bearer_token).await
+}
+
+#[tauri::command]
+pub async fn run_x_collection() -> Result<CollectionResult, String> {
+    let settings = crate::settings::load_settings()?;
+
+    let credentials = settings.x.ok_or("X credentials not configured")?;
+    let queries = settings.x_queries;
+
+    if queries.is_empty() {
+        return Err("No X search queries configured".to_string());
+    }
+
+    x::collect(&credentials.bearer_token, &queries).await
+}
+```
+
+**File:** `src-tauri/src/lib.rs`
+
+```rust
+mod x;  // ADD
+
+// In generate_handler! macro, add:
+commands::test_x_connection,
+commands::run_x_collection,
+```
+
+#### Step 4: Update Frontend API
+
+**File:** `src/renderer/api.ts`
+
+```typescript
+export async function testXConnection(bearerToken: string): Promise<boolean> {
+  return invoke('test_x_connection', { bearerToken });
+}
+
+export async function runXCollection(): Promise<CollectionResult> {
+  return invoke('run_x_collection');
+}
+
+export async function saveXCredentials(credentials: XCredentials): Promise<void> {
+  const settings = await getSettings();
+  settings.x = credentials;
+  return saveSettings(settings);
+}
+```
+
+#### Step 5: Update Settings UI
+
+**File:** `src/renderer/pages/Settings.tsx`
+
+Add new section for X credentials:
+- Bearer Token input (password field)
+- Test Connection button
+- Search queries input (comma-separated or multi-line)
+- Optional: Specific accounts to track
+
+### API Request Examples
+
+**Test Connection:**
+```http
+GET https://api.twitter.com/2/users/me
+Authorization: Bearer <token>
+```
+
+**Search Recent Tweets:**
+```http
+GET https://api.twitter.com/2/tweets/search/recent
+    ?query=bitcoin -is:retweet lang:en
+    &tweet.fields=id,text,author_id,created_at,public_metrics
+    &user.fields=id,username,name,public_metrics
+    &expansions=author_id
+    &max_results=100
+Authorization: Bearer <token>
+```
+
+**Get User's Tweets:**
+```http
+GET https://api.twitter.com/2/users/:id/tweets
+    ?tweet.fields=id,text,created_at,public_metrics
+    &max_results=100
+Authorization: Bearer <token>
+```
+
+### Error Handling
+
+| HTTP Status | Meaning | Action |
+|-------------|---------|--------|
+| 200 | Success | Process data |
+| 400 | Bad Request | Log error, skip query |
+| 401 | Unauthorized | Invalid token, prompt user |
+| 403 | Forbidden | Endpoint not available on tier |
+| 429 | Rate Limited | Wait for reset, backoff |
+| 503 | Service Unavailable | Retry with backoff |
+
+### Testing Checklist
+
+- [ ] Bearer token validation works
+- [ ] Search returns tweets for valid queries
+- [ ] Tweets are stored with correct platform='x'
+- [ ] Creators are deduplicated by platform_id
+- [ ] Topics are extracted from tweet text
+- [ ] Co-occurrences update when multiple topics found
+- [ ] Rate limiting prevents 429 errors
+- [ ] UI shows X collection status
+- [ ] Settings persist X credentials securely
+
+### Collection Strategy
+
+**Recommended approach for meaningful data:**
+
+1. **Keyword Search:** Primary method
+   - Configure 5-10 topic-related search queries
+   - Example: "bitcoin investing", "AI startups", "side hustle ideas"
+   - Fetch latest 100 tweets per query
+
+2. **Influencer Tracking:** Secondary method
+   - Track 10-20 key accounts in target niches
+   - Fetch their recent tweets for pivot detection
+   - Requires user ID lookup first
+
+3. **Frequency:**
+   - Every 2-4 hours (vs Reddit's 30 min) due to rate limits
+   - Basic tier allows ~10K tweets/month = ~333/day
+
+### Estimated Implementation Effort
+
+| Task | Complexity |
+|------|------------|
+| `x.rs` collector module | Medium - ~300 lines following Reddit pattern |
+| Settings updates | Low - 10-20 lines |
+| Commands updates | Low - 20-30 lines |
+| Frontend API | Low - 10 lines |
+| Settings UI | Medium - ~100 lines new JSX |
+| Testing & debugging | Medium - API quirks |
+
+**Total:** Comparable to Reddit implementation, main complexity is X API rate limiting and response structure differences
+
+---
+
+## Phase 2B: YouTube Implementation Plan
+
+### Overview
+
+This section documents the implementation plan for adding YouTube data collection to Trendr, completing the three-platform data collection system (Reddit, X, YouTube).
+
+### YouTube Data API v3 Background
+
+**Authentication:**
+- Uses API Key (simplest) or OAuth 2.0 (for user-specific data)
+- API Key sufficient for public data (videos, channels, comments)
+- User obtains key from [Google Cloud Console](https://console.cloud.google.com/)
+- Key passed as query parameter: `?key=YOUR_API_KEY`
+
+**Quota System:**
+YouTube uses a quota-based system rather than rate limits:
+
+| Operation | Quota Cost |
+|-----------|------------|
+| `search.list` | 100 units |
+| `videos.list` | 1 unit |
+| `channels.list` | 1 unit |
+| `commentThreads.list` | 1 unit |
+| `playlistItems.list` | 1 unit |
+
+**Daily Quota:** 10,000 units/day (free tier)
+
+**Quota Budget Example:**
+- 50 searches/day = 5,000 units
+- 500 video details = 500 units
+- 500 channel lookups = 500 units
+- Remaining: 4,000 units for comments
+- **Result:** ~50 topic searches with full enrichment daily
+
+**Key Endpoints:**
+
+| Endpoint | Purpose | Quota |
+|----------|---------|-------|
+| `GET /search` | Search videos by keyword | 100 |
+| `GET /videos` | Get video details (stats, snippet) | 1 |
+| `GET /channels` | Get channel details | 1 |
+| `GET /commentThreads` | Get video comments | 1 |
+| `GET /playlistItems` | Get channel uploads | 1 |
+
+**Data Fields to Request:**
+```
+part=snippet,statistics,contentDetails
+fields=items(id,snippet(title,description,channelId,channelTitle,publishedAt,tags),statistics(viewCount,likeCount,commentCount))
+```
+
+### Data Mapping: YouTube → Trendr Schema
+
+| YouTube API Field | Trendr Table.Column | Notes |
+|-------------------|---------------------|-------|
+| `video.id` | `content.platform_id` | YouTube video ID (11 chars) |
+| `video.snippet.title` | `content.text_content` | Combined with description |
+| `video.snippet.description` | `content.text_content` | Appended to title |
+| `video.snippet.channelId` | Link to `creators` | Channel as creator |
+| `video.snippet.publishedAt` | `content.published_at` | ISO 8601 format |
+| `video.statistics.likeCount` | `content.engagement_likes` | |
+| `video.statistics.commentCount` | `content.engagement_comments` | |
+| `video.statistics.viewCount` | `content.engagement_views` | Unique to video |
+| `channel.id` | `creators.platform_id` | |
+| `channel.snippet.title` | `creators.display_name` | Channel name |
+| `channel.snippet.customUrl` | `creators.username` | @handle if available |
+| `channel.statistics.subscriberCount` | `creators.follower_count` | Subscriber count |
+
+### Implementation Files
+
+**Files to Create:**
+```
+src-tauri/src/youtube.rs           # YouTube collector module (new)
+```
+
+**Files to Modify:**
+```
+src-tauri/src/lib.rs               # Add mod youtube; register commands
+src-tauri/src/settings.rs          # Add YouTubeCredentials to AppSettings
+src-tauri/src/commands.rs          # Add YouTube command handlers
+src/renderer/api.ts                # Add YouTube API methods
+src/renderer/pages/Settings.tsx    # Add YouTube credentials UI
+```
+
+### Step-by-Step Implementation
+
+#### Step 1: Update Settings Module
+
+**File:** `src-tauri/src/settings.rs`
+
+Add to structs:
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct YouTubeCredentials {
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AppSettings {
+    pub reddit: Option<RedditCredentials>,
+    pub x: Option<XCredentials>,
+    pub youtube: Option<YouTubeCredentials>,    // ADD
+    // ... existing fields ...
+    #[serde(rename = "youtubeQueries")]
+    #[serde(default)]
+    pub youtube_queries: Vec<String>,           // ADD - search terms
+    #[serde(rename = "youtubeChannels")]
+    #[serde(default)]
+    pub youtube_channels: Vec<String>,          // ADD - channel IDs to track
+}
+```
+
+#### Step 2: Create YouTube Collector Module
+
+**File:** `src-tauri/src/youtube.rs`
+
+**Structure:**
+
+```rust
+use crate::database::with_db;
+use crate::settings::YouTubeCredentials;
+use crate::topics::extract_topics;
+use rusqlite::params;
+use serde::Deserialize;
+
+const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
+const USER_AGENT: &str = "Trendr/1.0.0";
+
+// Response structs
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    items: Option<Vec<SearchItem>>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchItem {
+    id: SearchItemId,
+    snippet: Option<Snippet>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchItemId {
+    #[serde(rename = "videoId")]
+    video_id: Option<String>,
+    #[serde(rename = "channelId")]
+    channel_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Snippet {
+    title: String,
+    description: Option<String>,
+    #[serde(rename = "channelId")]
+    channel_id: String,
+    #[serde(rename = "channelTitle")]
+    channel_title: String,
+    #[serde(rename = "publishedAt")]
+    published_at: String,
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VideoResponse {
+    items: Option<Vec<VideoItem>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VideoItem {
+    id: String,
+    snippet: Option<Snippet>,
+    statistics: Option<Statistics>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Statistics {
+    #[serde(rename = "viewCount")]
+    view_count: Option<String>,
+    #[serde(rename = "likeCount")]
+    like_count: Option<String>,
+    #[serde(rename = "commentCount")]
+    comment_count: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelResponse {
+    items: Option<Vec<ChannelItem>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelItem {
+    id: String,
+    snippet: Option<ChannelSnippet>,
+    statistics: Option<ChannelStatistics>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelSnippet {
+    title: String,
+    #[serde(rename = "customUrl")]
+    custom_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelStatistics {
+    #[serde(rename = "subscriberCount")]
+    subscriber_count: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CollectionResult {
+    pub posts_collected: u32,
+    pub topics_extracted: u32,
+}
+
+/// Test connection to YouTube API
+pub async fn test_connection(api_key: &str) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+
+    // Simple test: search for a common term with minimal quota usage
+    let url = format!(
+        "{}/search?part=snippet&q=test&maxResults=1&type=video&key={}",
+        BASE_URL, api_key
+    );
+
+    let response = client
+        .get(&url)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+
+    if response.status().is_success() {
+        Ok(true)
+    } else if response.status() == 400 {
+        Err("Invalid API key format".to_string())
+    } else if response.status() == 403 {
+        Err("API key invalid or YouTube Data API not enabled".to_string())
+    } else {
+        Err(format!("YouTube API error: {}", response.status()))
+    }
+}
+
+/// Collect videos from YouTube based on search queries
+pub async fn collect(
+    credentials: &YouTubeCredentials,
+    queries: &[String],
+) -> Result<CollectionResult, String> {
+    let client = reqwest::Client::new();
+
+    let mut total_posts = 0u32;
+    let mut total_topics = 0u32;
+
+    for query in queries {
+        log::info!("Searching YouTube for: {}", query);
+
+        match search_videos(&client, &credentials.api_key, query).await {
+            Ok(video_ids) => {
+                // Batch fetch video details (up to 50 at a time)
+                for chunk in video_ids.chunks(50) {
+                    match get_video_details(&client, &credentials.api_key, chunk).await {
+                        Ok(videos) => {
+                            for video in videos {
+                                match process_video(&video).await {
+                                    Ok(topics_found) => {
+                                        total_posts += 1;
+                                        total_topics += topics_found;
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to process video {}: {}", video.id, e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => log::error!("Failed to get video details: {}", e),
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to search YouTube for '{}': {}", query, e);
+            }
+        }
+
+        // Small delay between queries
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
+
+    Ok(CollectionResult {
+        posts_collected: total_posts,
+        topics_extracted: total_topics,
+    })
+}
+
+/// Search for videos and return video IDs
+async fn search_videos(
+    client: &reqwest::Client,
+    api_key: &str,
+    query: &str,
+) -> Result<Vec<String>, String> {
+    let url = format!(
+        "{}/search?part=snippet&q={}&maxResults=25&type=video&order=relevance&key={}",
+        BASE_URL,
+        urlencoding::encode(query),
+        api_key
+    );
+
+    let response = client
+        .get(&url)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("YouTube API error: {}", response.status()));
+    }
+
+    let search_response: SearchResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let video_ids = search_response
+        .items
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| item.id.video_id)
+        .collect();
+
+    Ok(video_ids)
+}
+
+/// Get full video details for a batch of video IDs
+async fn get_video_details(
+    client: &reqwest::Client,
+    api_key: &str,
+    video_ids: &[String],
+) -> Result<Vec<VideoItem>, String> {
+    let ids = video_ids.join(",");
+    let url = format!(
+        "{}/videos?part=snippet,statistics&id={}&key={}",
+        BASE_URL, ids, api_key
+    );
+
+    let response = client
+        .get(&url)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("YouTube API error: {}", response.status()));
+    }
+
+    let video_response: VideoResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(video_response.items.unwrap_or_default())
+}
+
+/// Process a video and store in database
+async fn process_video(video: &VideoItem) -> Result<u32, String> {
+    // Check if video already exists
+    let exists = with_db(|conn| {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM content WHERE platform = 'youtube' AND platform_id = ?1",
+            params![&video.id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    })?;
+
+    if exists {
+        return Ok(0);
+    }
+
+    let snippet = video.snippet.as_ref().ok_or("Missing snippet")?;
+
+    // Get or create creator (channel)
+    let creator_id = get_or_create_creator(&snippet.channel_id, &snippet.channel_title)?;
+
+    // Build text content from title + description
+    let text_content = format!(
+        "{}\n\n{}",
+        snippet.title,
+        snippet.description.as_deref().unwrap_or("")
+    ).trim().to_string();
+
+    // Parse engagement metrics
+    let (views, likes, comments) = match &video.statistics {
+        Some(stats) => (
+            stats.view_count.as_ref().and_then(|v| v.parse::<i64>().ok()),
+            stats.like_count.as_ref().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0),
+            stats.comment_count.as_ref().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0),
+        ),
+        None => (None, 0, 0),
+    };
+
+    // Insert content
+    let content_id = uuid::Uuid::new_v4().to_string();
+
+    with_db(|conn| {
+        conn.execute(
+            r#"INSERT INTO content (id, platform, platform_id, creator_id, content_type, text_content,
+               engagement_likes, engagement_comments, engagement_views, published_at)
+               VALUES (?1, 'youtube', ?2, ?3, 'video', ?4, ?5, ?6, ?7, ?8)"#,
+            params![
+                &content_id,
+                &video.id,
+                &creator_id,
+                &text_content,
+                likes,
+                comments,
+                views,
+                &snippet.published_at
+            ],
+        )?;
+        Ok(())
+    })?;
+
+    // Extract topics
+    let topics = extract_topics(&text_content)?;
+    let topics_count = topics.len() as u32;
+
+    // Link content to topics
+    for topic in &topics {
+        with_db(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO content_topics (content_id, topic_id, confidence) VALUES (?1, ?2, ?3)",
+                params![&content_id, &topic.topic_id, topic.confidence],
+            )?;
+            Ok(())
+        })?;
+    }
+
+    // Update co-occurrences
+    if topics.len() > 1 {
+        let topic_ids: Vec<String> = topics.iter().map(|t| t.topic_id.clone()).collect();
+        update_cooccurrences(&topic_ids)?;
+    }
+
+    Ok(topics_count)
+}
+
+/// Get or create a creator (channel)
+fn get_or_create_creator(channel_id: &str, channel_title: &str) -> Result<String, String> {
+    // Check if creator exists
+    let existing = with_db(|conn| {
+        let mut stmt = conn
+            .prepare("SELECT id FROM creators WHERE platform = 'youtube' AND platform_id = ?1")?;
+        let mut rows = stmt.query(params![channel_id])?;
+        if let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            Ok(Some(id))
+        } else {
+            Ok(None)
+        }
+    })?;
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    // Create new creator
+    let creator_id = uuid::Uuid::new_v4().to_string();
+    with_db(|conn| {
+        conn.execute(
+            "INSERT INTO creators (id, platform, platform_id, username, display_name) VALUES (?1, 'youtube', ?2, ?2, ?3)",
+            params![&creator_id, channel_id, channel_title],
+        )?;
+        Ok(())
+    })?;
+
+    Ok(creator_id)
+}
+
+/// Update topic co-occurrence counts
+fn update_cooccurrences(topic_ids: &[String]) -> Result<(), String> {
+    for i in 0..topic_ids.len() {
+        for j in (i + 1)..topic_ids.len() {
+            let (a, b) = if topic_ids[i] < topic_ids[j] {
+                (&topic_ids[i], &topic_ids[j])
+            } else {
+                (&topic_ids[j], &topic_ids[i])
+            };
+
+            with_db(|conn| {
+                conn.execute(
+                    r#"INSERT INTO topic_cooccurrences (topic_a_id, topic_b_id, frequency, last_seen)
+                       VALUES (?1, ?2, 1, CURRENT_TIMESTAMP)
+                       ON CONFLICT(topic_a_id, topic_b_id) DO UPDATE SET
+                       frequency = frequency + 1, last_seen = CURRENT_TIMESTAMP"#,
+                    params![a, b],
+                )?;
+                Ok(())
+            })?;
+        }
+    }
+    Ok(())
+}
+```
+
+#### Step 3: Add Command Handlers
+
+**File:** `src-tauri/src/commands.rs`
+
+```rust
+use crate::youtube;
+
+#[tauri::command]
+pub async fn test_youtube_connection(api_key: String) -> Result<bool, String> {
+    youtube::test_connection(&api_key).await
+}
+
+#[tauri::command]
+pub async fn run_youtube_collection() -> Result<CollectionResult, String> {
+    let settings = crate::settings::load_settings();
+
+    let credentials = settings.youtube.ok_or("YouTube credentials not configured")?;
+    let queries = settings.youtube_queries;
+
+    if queries.is_empty() {
+        return Err("No YouTube search queries configured".to_string());
+    }
+
+    youtube::collect(&credentials, &queries).await.map(|r| CollectionResult {
+        posts_collected: r.posts_collected,
+        topics_extracted: r.topics_extracted,
+    })
+}
+```
+
+**File:** `src-tauri/src/lib.rs`
+
+```rust
+mod youtube;  // ADD
+
+// In generate_handler! macro, add:
+commands::test_youtube_connection,
+commands::run_youtube_collection,
+```
+
+#### Step 4: Update Frontend API
+
+**File:** `src/renderer/api.ts`
+
+```typescript
+export interface YouTubeCredentials {
+  apiKey: string;
+}
+
+export interface AppSettings {
+  // ... existing fields ...
+  youtube: YouTubeCredentials | null;
+  youtubeQueries: string[];
+  youtubeChannels: string[];
+}
+
+// Add to api object:
+testYouTubeConnection: (apiKey: string): Promise<boolean> =>
+  invoke('test_youtube_connection', { apiKey }),
+
+runYouTubeCollection: (): Promise<CollectionResult> =>
+  invoke('run_youtube_collection'),
+```
+
+#### Step 5: Update Settings UI
+
+**File:** `src/renderer/pages/Settings.tsx`
+
+Add new section after X credentials:
+
+```tsx
+{/* YouTube API Section */}
+<div className="card mb-6">
+  <h2 className="font-semibold text-gray-900 mb-4">YouTube API Credentials</h2>
+  <p className="text-sm text-gray-500 mb-4">
+    Get your API key from the{' '}
+    <a
+      href="https://console.cloud.google.com/apis/credentials"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary-600 hover:underline"
+    >
+      Google Cloud Console
+    </a>
+    . Enable the YouTube Data API v3. Free tier: 10,000 quota units/day.
+  </p>
+
+  <div className="space-y-4">
+    <div>
+      <label className="label">API Key</label>
+      <input
+        type="password"
+        value={youtubeApiKey}
+        onChange={e => setYoutubeApiKey(e.target.value)}
+        placeholder="Your YouTube Data API v3 key"
+        className="input"
+      />
+    </div>
+
+    <div>
+      <label className="label">Search Queries</label>
+      <input
+        type="text"
+        value={youtubeQueries}
+        onChange={e => setYoutubeQueries(e.target.value)}
+        placeholder="bitcoin investing, AI tutorial, side hustle"
+        className="input"
+      />
+      <p className="text-sm text-gray-500 mt-1">
+        Comma-separated topics to search for on YouTube
+      </p>
+    </div>
+
+    <button
+      onClick={handleTestYouTubeConnection}
+      disabled={testingYouTube || !youtubeApiKey}
+      className="btn btn-secondary disabled:opacity-50"
+    >
+      {testingYouTube ? 'Testing...' : 'Test Connection'}
+    </button>
+  </div>
+</div>
+```
+
+### API Request Examples
+
+**Test Connection (Search):**
+```http
+GET https://www.googleapis.com/youtube/v3/search
+    ?part=snippet
+    &q=test
+    &maxResults=1
+    &type=video
+    &key=YOUR_API_KEY
+```
+
+**Search Videos:**
+```http
+GET https://www.googleapis.com/youtube/v3/search
+    ?part=snippet
+    &q=bitcoin investing
+    &maxResults=25
+    &type=video
+    &order=relevance
+    &key=YOUR_API_KEY
+```
+
+**Get Video Details (Batch):**
+```http
+GET https://www.googleapis.com/youtube/v3/videos
+    ?part=snippet,statistics
+    &id=VIDEO_ID_1,VIDEO_ID_2,VIDEO_ID_3
+    &key=YOUR_API_KEY
+```
+
+**Get Channel Details:**
+```http
+GET https://www.googleapis.com/youtube/v3/channels
+    ?part=snippet,statistics
+    &id=CHANNEL_ID
+    &key=YOUR_API_KEY
+```
+
+### Error Handling
+
+| HTTP Status | Meaning | Action |
+|-------------|---------|--------|
+| 200 | Success | Process data |
+| 400 | Bad Request | Invalid parameters or API key format |
+| 403 | Forbidden | API key invalid, API not enabled, or quota exceeded |
+| 404 | Not Found | Resource doesn't exist |
+| 429 | Too Many Requests | Rate limited (rare with quota system) |
+
+**Quota Exceeded Response:**
+```json
+{
+  "error": {
+    "code": 403,
+    "message": "The request cannot be completed because you have exceeded your quota.",
+    "errors": [{
+      "reason": "quotaExceeded"
+    }]
+  }
+}
+```
+
+### Quota Optimization Strategies
+
+1. **Batch Video Details:** Fetch up to 50 videos per `videos.list` call (1 unit instead of 50)
+
+2. **Minimize Search Calls:** Each search costs 100 units
+   - Limit to 5-10 searches per collection cycle
+   - Cache video IDs to avoid re-searching
+
+3. **Skip Known Videos:** Check database before fetching details
+
+4. **Prioritize High-Value Queries:** Focus on most relevant topics
+
+5. **Time-Based Collection:** Run once every 4-6 hours instead of frequently
+
+**Quota Budget Example (10,000 units/day):**
+| Operation | Count | Units Each | Total |
+|-----------|-------|------------|-------|
+| Searches | 10 | 100 | 1,000 |
+| Video Details (batched) | 10 | 1 | 10 |
+| Channel Details | 50 | 1 | 50 |
+| **Total Used** | | | **1,060** |
+| **Remaining** | | | **8,940** |
+
+### Testing Checklist
+
+- [ ] API key validation works
+- [ ] Search returns video IDs
+- [ ] Video details are fetched in batches
+- [ ] Videos are stored with correct platform='youtube'
+- [ ] Channels are created as creators
+- [ ] Topics are extracted from title + description
+- [ ] View counts are stored in engagement_views
+- [ ] Co-occurrences update when multiple topics found
+- [ ] Quota errors are handled gracefully
+- [ ] UI shows YouTube collection status
+- [ ] Settings persist YouTube credentials
+
+### Collection Strategy
+
+**Recommended approach:**
+
+1. **Topic Search (Primary):**
+   - Configure 5-10 topic-related search queries
+   - Examples: "cryptocurrency news", "AI technology", "passive income"
+   - Fetch top 25 videos per query (most relevant)
+   - Cost: ~100 units per query = 500-1,000 units
+
+2. **Channel Tracking (Optional Enhancement):**
+   - Track specific channels known for topic coverage
+   - Use `playlistItems.list` to get channel's uploads playlist
+   - More targeted than search for creator pivot detection
+   - Cost: 1 unit per channel
+
+3. **Frequency:**
+   - Every 4-6 hours recommended
+   - YouTube content changes less frequently than Twitter
+   - Preserves quota for more queries
+
+4. **Content Quality:**
+   - YouTube videos have longer, richer descriptions
+   - Better for topic extraction than tweets
+   - Video tags provide additional topic signals
+
+### Differences from Reddit/X Implementation
+
+| Aspect | Reddit | X/Twitter | YouTube |
+|--------|--------|-----------|---------|
+| Auth | OAuth2 (complex) | Bearer Token | API Key (simple) |
+| Rate Limiting | 60 req/min | 450 req/15min | Quota-based |
+| Content Length | Long posts | 280 chars | Very long |
+| Primary ID | post ID | tweet ID | video ID (11 char) |
+| Creator Model | Author username | User ID | Channel ID |
+| Engagement | Score, Comments | Likes, Retweets, Views | Views, Likes, Comments |
+| Best Signal | Comments | Retweets, Engagement | Views, Like ratio |
+
+### Estimated Implementation Effort
+
+| Task | Complexity |
+|------|------------|
+| `youtube.rs` collector module | Medium - ~350 lines |
+| Settings updates | Low - 15-20 lines |
+| Commands updates | Low - 20-30 lines |
+| Frontend API | Low - 10-15 lines |
+| Settings UI | Medium - ~80 lines new JSX |
+| Testing & debugging | Low - API is well-documented |
+
+**Total:** Slightly simpler than X/Twitter due to API key auth and well-structured responses
