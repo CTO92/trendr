@@ -1,33 +1,3 @@
-// IPC Channels
-export const IPC_CHANNELS = {
-  // Settings
-  GET_SETTINGS: 'settings:get',
-  SAVE_SETTINGS: 'settings:save',
-  TEST_REDDIT_CONNECTION: 'settings:test-reddit',
-
-  // Collection
-  START_COLLECTION: 'collection:start',
-  STOP_COLLECTION: 'collection:stop',
-  GET_COLLECTION_STATUS: 'collection:status',
-  RUN_COLLECTION_NOW: 'collection:run-now',
-
-  // Topics
-  GET_TOPICS: 'topics:get',
-  GET_TOPIC_DETAILS: 'topics:get-details',
-  SEARCH_TOPICS: 'topics:search',
-
-  // Content
-  GET_CONTENT: 'content:get',
-  GET_CONTENT_BY_TOPIC: 'content:get-by-topic',
-
-  // Dashboard
-  GET_DASHBOARD_STATS: 'dashboard:stats',
-
-  // Alerts
-  GET_ALERTS: 'alerts:get',
-  MARK_ALERT_READ: 'alerts:mark-read',
-} as const;
-
 // Default topic taxonomy - broad categories
 export const DEFAULT_TOPICS: { name: string; keywords: string[] }[] = [
   {

@@ -21,7 +21,9 @@
       "Bash(~/.cargo/bin/rustc:*)",
       "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
       "Bash(npx tauri init:*)",
-      "Bash(npm run tauri:dev:*)"
+      "Bash(npm run tauri:dev:*)",
+      "Bash(Remove-Item -Path \"c:\\\\Users\\\\melis\\\\OneDrive\\\\Documents\\\\Code\\\\trendr\\\\src\\\\main\\\\ipc-handlers.ts\" -Force)",
+      "Bash(rm:*)"
     ]
   }
 }
